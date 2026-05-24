@@ -1,0 +1,9 @@
+.venv/
+apicache/
+logs/
+user-password.cfg
+data.json
+user-config.py
+*.lwp
+throttle.ctrl
+*.pyc
