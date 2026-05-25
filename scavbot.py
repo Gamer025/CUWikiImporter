@@ -6,11 +6,14 @@ from collections import OrderedDict
 
 
 # Created with pwb generate_family_file.py
-site = pywikibot.Site("en", "scavwiki")
-#site = pywikibot.Site("en", "testgg")
+
+site = pywikibot.Site("en", "testgg")
+#site = pywikibot.Site("en", "scavwiki")
 data_types = Enum('data_types', [('Item', 0), ('Recipe', 1), ('Liquid', 2), ('Tile', 3)])
-infobox_names = ["Item Infobox", "Recipe???", "Liquid Infobox", "Tile Infobox"]
-namespaces = ["User:Gamer025/sandbox/Items/", "User:Gamer025/sandbox/Recipes/", "User:Gamer025/sandbox/Liquids/", "User:Gamer025/sandbox/Tiles/"]
+infobox_names = ["Scav Item Infobox", "Scav Recipe???", "Scav Liquid Infobox", "Scav Tile Infobox"]
+#infobox_names = ["Item Infobox", "Recipe???", "Liquid Infobox", "Tile Infobox"]
+namespaces = ["ScavWiki/Items/", "ScavWiki/Recipes/", "ScavWiki/Liquids/", "ScavWiki/Tiles/"]
+#namespaces = ["User:Gamer025/sandbox/Items/", "User:Gamer025/sandbox/Recipes/", "User:Gamer025/sandbox/Liquids/", "User:Gamer025/sandbox/Tiles/"]
 
 def main():
     global wiki_json_data
@@ -20,8 +23,11 @@ def main():
     with open("data.json", "r", encoding="utf-8") as f:
         wiki_json_data = json.load(f)
 
-    create_page("bigpack", data_types.Item)
-    update_template("bigpack", data_types.Item)
+    for item in wiki_json_data["items"]:
+        update_template(item["fullName"], data_types.Item)
+
+    for item in wiki_json_data["items"]:
+        create_page(item["fullName"], data_types.Item)
 
 # https://stackoverflow.com/questions/51359783/how-to-flatten-multilevel-nested-json
 def flatten_json(y):
@@ -50,7 +56,7 @@ def merge_params(existing, new):
     return merged
 
 # Convert the different value types to correct mediawiki strings (e.g. null to empty string)
-def convert_value(value):
+def convert_value_to_mediawiki_string(value):
     if value is None:
         return ""
     if isinstance(value, bool):
@@ -103,7 +109,7 @@ def object_name_to_desc(object_name: str, lang: str = "EN"):
 
 
 # Create a new template from scratch or update existing data when existing_data is passed
-def create_template(object_name: str, type: data_types, existing_data: OrderedDict) -> str:
+def create_template(object_name: str, type: data_types, existing_data: OrderedDict = None) -> str:
     
     # Get data from JSON dump depending on what we are dealing with (Item, Fluid, ...)
     if (type is data_types.Item ):
@@ -117,13 +123,11 @@ def create_template(object_name: str, type: data_types, existing_data: OrderedDi
             (x for x in wiki_json_data.get("recipes", []) if x.get("fullName") == object_name),
             None
         )
-        return build_template(item_data, infobox_names[type.value])
     if (type is data_types.Liquid ):
         item_data = next(
             (x for x in wiki_json_data.get("liquids", []) if x.get("localename") == object_name),
             None
         )
-        return build_template(item_data, infobox_names[type.value])
     if (type is data_types.Tile ):
         item_data = next(
             (x for x in wiki_json_data.get("tiles", []) if x.get("name") == object_name),
@@ -133,17 +137,20 @@ def create_template(object_name: str, type: data_types, existing_data: OrderedDi
     # Update existing template
     if (existing_data is not None):
         # Overwrite all params that with data that exists in the JSON dump
-        updated_data = merge_params(existing_data, flatten_json(item_data))
-        # Language data
-        updated_data["displayName"] = object_name_to_lang(object_name)
-        updated_data["description"] = object_name_to_desc(object_name)
-        return textlib.glue_template_and_params((infobox_names[type.value], updated_data))
+        prepared_data = merge_params(existing_data, flatten_json(item_data))
+    else :
+        prepared_data = item_data
+       
+
+     # Language data
+    prepared_data["displayName"] = object_name_to_lang(object_name)
+    prepared_data["description"] = object_name_to_desc(object_name)
+
+    for key in prepared_data:
+        prepared_data[key] = convert_value_to_mediawiki_string(prepared_data[key])
 
 
-    # Otherwise new template from scratch
-    item_data["displayName"] = object_name_to_lang(object_name)
-    item_data["description"] = object_name_to_desc(object_name)
-    return textlib.glue_template_and_params((infobox_names[type.value], flatten_json(item_data)))
+    return textlib.glue_template_and_params((infobox_names[type.value], prepared_data))
            
 
 def create_page(object_name: str, type: data_types):
