@@ -2,20 +2,23 @@ import json
 import pywikibot
 from pywikibot import textlib
 from enum import Enum
+from collections import OrderedDict
 
 
+# Created with pwb generate_family_file.py
 site = pywikibot.Site("en", "scavwiki")
+#site = pywikibot.Site("en", "testgg")
 data_types = Enum('data_types', [('Item', 0), ('Recipe', 1), ('Liquid', 2), ('Tile', 3)])
 infobox_names = ["Item Infobox", "Recipe???", "Liquid Infobox", "Tile Infobox"]
 namespaces = ["User:Gamer025/sandbox/Items/", "User:Gamer025/sandbox/Recipes/", "User:Gamer025/sandbox/Liquids/", "User:Gamer025/sandbox/Tiles/"]
 
 def main():
-    global json_data
+    global wiki_json_data
     
     # Login needs to be setup with pwb generate_user_files.py
     site.login()
     with open("data.json", "r", encoding="utf-8") as f:
-        json_data = json.load(f)
+        wiki_json_data = json.load(f)
 
     create_page("bigpack", data_types.Item)
     update_template("bigpack", data_types.Item)
@@ -40,6 +43,12 @@ def flatten_json(y):
     return out
 
 
+def merge_params(existing, new):
+    merged = existing.copy()
+    for key, value in new.items():
+        merged[key] = value
+    return merged
+
 # Convert the different value types to correct mediawiki strings (e.g. null to empty string)
 def convert_value(value):
     if value is None:
@@ -56,67 +65,105 @@ def convert_value(value):
         return "[" + ", ".join(map(str, value)) + "]"
     return str(value)
 
-# Generate a mediawiki itembox template string
-def build_template(data, template_name):
-    flat = flatten_json(data)
-    # {{Item Infobox
-    lines = [f"{{{{{template_name}"]
+_lang_cache = {}
 
-    # | key = value
-    for key, value in flat.items():
-        lines.append(f"| {key} = {convert_value(value)}")
+# Get display name for an object in main    
+def object_name_to_lang(object_name: str, lang: str = "EN"):
+    if lang not in _lang_cache:
+        try:
+            with open(f"{lang}.json", "r", encoding="utf-8") as f:
+                _lang_cache[lang] = json.load(f)
+        except FileNotFoundError:
+            print(f"Couldn't find '{lang}.json', returning raw object name.")
+            return object_name
 
-    # }}
-    lines.append("}}")
-    return "\n".join(lines)
+    lang_data = _lang_cache[lang]
+    try:
+        return lang_data["main"][object_name]
+    except Exception:
+        print(f"[ERROR] Could not find key '{object_name}' in '{lang}.json'.")
+        return object_name
+    
+# Get description for an object in main    
+def object_name_to_desc(object_name: str, lang: str = "EN"):
+    if lang not in _lang_cache:
+        try:
+            with open(f"{lang}.json", "r", encoding="utf-8") as f:
+                _lang_cache[lang] = json.load(f)
+        except FileNotFoundError:
+            print(f"Couldn't find '{lang}.json', returning raw object name.")
+            return object_name
 
-def create_template(object_name: str, type: data_types) -> str:
+    lang_data = _lang_cache[lang]
+    try:
+        return lang_data["main"][f"{object_name}dsc"]
+    except Exception:
+        print(f"[ERROR] Could not find key '{object_name}dsc' in '{lang}.json'.")
+    return lang_data.get()
+
+
+# Create a new template from scratch or update existing data when existing_data is passed
+def create_template(object_name: str, type: data_types, existing_data: OrderedDict) -> str:
+    
+    # Get data from JSON dump depending on what we are dealing with (Item, Fluid, ...)
     if (type is data_types.Item ):
         item_data = next(
-            (x for x in json_data.get("items", []) if x.get("fullName") == object_name),
+            (x for x in wiki_json_data.get("items", []) if x.get("fullName") == object_name),
             None
         )
-        return build_template(item_data, infobox_names[type.value])
-    # TODO: Figure out on what to match recipes (probably result -> id ?)
+    # TODO: Figure out on what to match recipes on (probably result -> id ?)
     if (type is data_types.Recipe ):
         item_data = next(
-            (x for x in json_data.get("recipes", []) if x.get("fullName") == object_name),
+            (x for x in wiki_json_data.get("recipes", []) if x.get("fullName") == object_name),
             None
         )
         return build_template(item_data, infobox_names[type.value])
     if (type is data_types.Liquid ):
         item_data = next(
-            (x for x in json_data.get("liquids", []) if x.get("localename") == object_name),
+            (x for x in wiki_json_data.get("liquids", []) if x.get("localename") == object_name),
             None
         )
         return build_template(item_data, infobox_names[type.value])
     if (type is data_types.Tile ):
         item_data = next(
-            (x for x in json_data.get("tiles", []) if x.get("name") == object_name),
+            (x for x in wiki_json_data.get("tiles", []) if x.get("name") == object_name),
             None
         )
-        return build_template(item_data, infobox_names[type.value])
-         
-        
 
-def create_page(item_name: str, type: data_types):
-    page = pywikibot.Page(site, f"{namespaces[type.value]}{item_name}")
+    # Update existing template
+    if (existing_data is not None):
+        # Overwrite all params that with data that exists in the JSON dump
+        updated_data = merge_params(existing_data, flatten_json(item_data))
+        # Language data
+        updated_data["displayName"] = object_name_to_lang(object_name)
+        updated_data["description"] = object_name_to_desc(object_name)
+        return textlib.glue_template_and_params((infobox_names[type.value], updated_data))
+
+
+    # Otherwise new template from scratch
+    item_data["displayName"] = object_name_to_lang(object_name)
+    item_data["description"] = object_name_to_desc(object_name)
+    return textlib.glue_template_and_params((infobox_names[type.value], flatten_json(item_data)))
+           
+
+def create_page(object_name: str, type: data_types):
+    page = pywikibot.Page(site, f"{namespaces[type.value]}{object_name_to_lang(object_name)}")
     if page.exists():
         print(f"Tried creating already existing page {page}, page creation cancelled!")
         return;
 
     
-    page.text = create_template(item_name, type)
+    page.text = create_template(object_name, type)
     page.save()
 
 
 def update_template(object_name: str, type: data_types):
-    global json_data
+    global wiki_json_data
 
-    page = pywikibot.Page(site, f"{namespaces[type.value]}{object_name}")
+    page = pywikibot.Page(site, f"{namespaces[type.value]}{object_name_to_lang(object_name)}")
 
     if not page.exists():
-        print("Tried updating template data non existing page!")
+        print("Tried updating template data on non existing page!")
         return
 
     text = page.text
@@ -132,16 +179,30 @@ def update_template(object_name: str, type: data_types):
     for template, params in templates:
         if template.strip().lower() == infobox_name.lower():
             found = True
-            infobox_params = params
+            # Need to remove all the trailing \n in every param value because otherwise glue_template_and_params will double them up ...
+            stripped_params = {k: v.rstrip("\n") for k, v in params.items()}
+            infobox_template = (template, stripped_params)
             break
-
+        
     # Otherwise put it on the top of the page
     if not found:
         page.text = create_template(object_name, type) + "\n" + text
+        print(f"Adding infobox to {page} because its missing")
         page.save(summary="Added Infobox to page because it was missing")
+        return
+    
+    # If we find the existing template replace it with and updated version if needed
+    old_template_text = textlib.glue_template_and_params(infobox_template)
+    new_template_text = create_template(object_name, type, infobox_template[1])
+    if (old_template_text != new_template_text):
+        if (old_template_text in page.text):
+            page.text = page.text.replace(old_template_text, new_template_text, 1)
+            print(f"Updating infobox on {page}")
+            page.save(summary="Updated existing infobox because didn't match with computed infobox.")
+        else:
+            print(f"Error updating infobox on page {page}. Old itembox could not be found with the following string: \n {old_template_text}")
+
+
         
-
-    # TODO: Code for updating existing info boxes
-
 if __name__=="__main__":
     main()

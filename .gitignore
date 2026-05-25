@@ -7,3 +7,4 @@ user-config.py
 *.lwp
 throttle.ctrl
 *.pyc
+EN.json
