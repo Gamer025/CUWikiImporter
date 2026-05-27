@@ -6,12 +6,14 @@ from collections import OrderedDict
 
 
 # Created with pwb generate_family_file.py
-
 site = pywikibot.Site("en", "testgg")
 #site = pywikibot.Site("en", "scavwiki")
+
 data_types = Enum('data_types', [('Item', 0), ('Recipe', 1), ('Liquid', 2), ('Tile', 3)])
+
 infobox_names = ["Scav Item Infobox", "Scav Recipe???", "Scav Liquid Infobox", "Scav Tile Infobox"]
 #infobox_names = ["Item Infobox", "Recipe???", "Liquid Infobox", "Tile Infobox"]
+
 namespaces = ["ScavWiki/Items/", "ScavWiki/Recipes/", "ScavWiki/Liquids/", "ScavWiki/Tiles/"]
 #namespaces = ["User:Gamer025/sandbox/Items/", "User:Gamer025/sandbox/Recipes/", "User:Gamer025/sandbox/Liquids/", "User:Gamer025/sandbox/Tiles/"]
 
@@ -23,11 +25,21 @@ def main():
     with open("data.json", "r", encoding="utf-8") as f:
         wiki_json_data = json.load(f)
 
-    for item in wiki_json_data["items"]:
-        update_template(item["fullName"], data_types.Item)
+    # Create pages if they don't exist otherwise update templates if needed
+    for liquids in wiki_json_data["liquids"]:
+        page = pywikibot.Page(site, generate_page_path(liquids["localeName"], data_types.Liquid))
+
+        if not page.exists():
+            create_page(liquids["localeName"], data_types.Liquid)
+        else:
+            update_template(liquids["localeName"], data_types.Liquid)
 
     for item in wiki_json_data["items"]:
-        create_page(item["fullName"], data_types.Item)
+        page = pywikibot.Page(site, generate_page_path(item["fullName"], data_types.Item))
+        if not page.exists():
+            create_page(item["fullName"], data_types.Item)
+        else:
+            update_template(item["fullName"], data_types.Item)
 
 # https://stackoverflow.com/questions/51359783/how-to-flatten-multilevel-nested-json
 def flatten_json(y):
@@ -74,7 +86,7 @@ def convert_value_to_mediawiki_string(value):
 _lang_cache = {}
 
 # Get display name for an object in main    
-def object_name_to_lang(object_name: str, lang: str = "EN"):
+def object_name_to_lang(object_name: str, type: data_types, lang: str = "EN"):
     if lang not in _lang_cache:
         try:
             with open(f"{lang}.json", "r", encoding="utf-8") as f:
@@ -84,14 +96,20 @@ def object_name_to_lang(object_name: str, lang: str = "EN"):
             return object_name
 
     lang_data = _lang_cache[lang]
+
+    if (type == type.Item):
+        json_path = "main"
+    else:
+        json_path = "other"
+
     try:
-        return lang_data["main"][object_name]
+        return lang_data[json_path][object_name]
     except Exception:
         print(f"[ERROR] Could not find key '{object_name}' in '{lang}.json'.")
         return object_name
     
 # Get description for an object in main    
-def object_name_to_desc(object_name: str, lang: str = "EN"):
+def object_name_to_desc(object_name: str, type: data_types, lang: str = "EN"):
     if lang not in _lang_cache:
         try:
             with open(f"{lang}.json", "r", encoding="utf-8") as f:
@@ -101,8 +119,14 @@ def object_name_to_desc(object_name: str, lang: str = "EN"):
             return object_name
 
     lang_data = _lang_cache[lang]
+
+    if (type == type.Item):
+        json_path = "main"
+    else:
+        json_path = "other"
+
     try:
-        return lang_data["main"][f"{object_name}dsc"]
+        return lang_data[json_path][f"{object_name}dsc"]
     except Exception:
         print(f"[ERROR] Could not find key '{object_name}dsc' in '{lang}.json'.")
     return lang_data.get()
@@ -125,9 +149,12 @@ def create_template(object_name: str, type: data_types, existing_data: OrderedDi
         )
     if (type is data_types.Liquid ):
         item_data = next(
-            (x for x in wiki_json_data.get("liquids", []) if x.get("localename") == object_name),
+            (x for x in wiki_json_data.get("liquids", []) if x.get("localeName") == object_name),
             None
         )
+        # Convert individual rgba values to single hex string
+        item_data["color"] = "#{:02X}{:02X}{:02X}{:02X}".format(*[item_data["color"][k] for k in ("r", "g", "b", "a")]
+)
     if (type is data_types.Tile ):
         item_data = next(
             (x for x in wiki_json_data.get("tiles", []) if x.get("name") == object_name),
@@ -139,22 +166,27 @@ def create_template(object_name: str, type: data_types, existing_data: OrderedDi
         # Overwrite all params that with data that exists in the JSON dump
         prepared_data = merge_params(existing_data, flatten_json(item_data))
     else :
-        prepared_data = item_data
+        prepared_data = flatten_json(item_data)
        
 
-     # Language data
-    prepared_data["displayName"] = object_name_to_lang(object_name)
-    prepared_data["description"] = object_name_to_desc(object_name)
+    # Language data
+    prepared_data["displayName"] = object_name_to_lang(object_name, type)
+    prepared_data["description"] = object_name_to_desc(object_name, type)
 
     for key in prepared_data:
         prepared_data[key] = convert_value_to_mediawiki_string(prepared_data[key])
 
+    # Sort the dictionary by key names so its easier to find stuff in the generated itemboxes
+    sorted_data = dict(sorted(prepared_data.items()))
+    return textlib.glue_template_and_params((infobox_names[type.value], sorted_data))
 
-    return textlib.glue_template_and_params((infobox_names[type.value], prepared_data))
-           
+
+# Generate full path to this object e.g. /Item/Backpack
+def generate_page_path(object_name: str, type: data_types) -> str:
+    return f"{namespaces[type.value]}{object_name_to_lang(object_name, type)}"
 
 def create_page(object_name: str, type: data_types):
-    page = pywikibot.Page(site, f"{namespaces[type.value]}{object_name_to_lang(object_name)}")
+    page = pywikibot.Page(site, generate_page_path(object_name, type))
     if page.exists():
         print(f"Tried creating already existing page {page}, page creation cancelled!")
         return;
@@ -167,7 +199,7 @@ def create_page(object_name: str, type: data_types):
 def update_template(object_name: str, type: data_types):
     global wiki_json_data
 
-    page = pywikibot.Page(site, f"{namespaces[type.value]}{object_name_to_lang(object_name)}")
+    page = pywikibot.Page(site, generate_page_path(object_name, type))
 
     if not page.exists():
         print("Tried updating template data on non existing page!")
@@ -208,7 +240,8 @@ def update_template(object_name: str, type: data_types):
             page.save(summary="Updated existing infobox because didn't match with computed infobox.")
         else:
             print(f"Error updating infobox on page {page}. Old itembox could not be found with the following string: \n {old_template_text}")
-
+    else:
+        print(f"Updating infobox on {page}")
 
         
 if __name__=="__main__":
